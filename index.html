@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedidos FSM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fc;
+        }
+        /* Clase para el encabezado pegajoso en el scroll de la columna */
+        .sticky-header {
+            position: -webkit-sticky;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-6 min-h-screen bg-slate-50">
+
+    <div class="flex justify-between items-center mb-4 border-b border-gray-200 pb-2">
+        <div class="flex items-center gap-2">
+            <h1 class="text-xl font-bold text-gray-800 tracking-tight">Pedidos FSM</h1>
+        </div>
+        
+        <button id="refresh-btn" class="group flex items-center gap-1.5 bg-white border border-gray-300 hover:bg-gray-50 hover:border-indigo-300 text-gray-700 text-sm font-medium py-1.5 px-3 rounded shadow-sm transition-all active:scale-95">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-indigo-600 transition-transform duration-500 group-hover:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span>Actualizar</span>
+        </button>
+    </div>
+
+    <div id="loading" class="text-center p-8 text-xl text-indigo-600">
+        Cargando datos de pedidos...
+        <div class="mt-4 animate-spin inline-block w-8 h-8 border-4 border-t-transparent border-indigo-500 rounded-full" role="status"></div>
+    </div>
+
+    <div id="error-message" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl shadow-md mb-4" role="alert">
+        <strong class="font-bold">Error:</strong>
+        <span id="error-text" class="block sm:inline"></span>
+    </div>
+
+    <div id="dashboard-container" class="grid gap-6 sm:gap-8 grid-cols-1 sm:grid-cols-2 hidden">
+    </div>
+
+    <script>
+        // ⚠️ CONFIGURACIÓN CLAVE: Reemplaza esta URL con la URL de tu Web App de Apps Script (la que termina en /exec?mode=json)
+        const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxshaWtEg4YTJ9Vu27eSqfpGvAUiboMfPJ8FnSxAjm4_rSpleJrNZwvOg1tMHcN2TMV/exec'; 
+        
+        const dashboardContainer = document.getElementById('dashboard-container');
+        const loadingElement = document.getElementById('loading');
+        const errorElement = document.getElementById('error-message');
+        const errorTextElement = document.getElementById('error-text');
+        const refreshBtn = document.getElementById('refresh-btn');
+
+        // --- Paleta de colores original (más intensa y translúcida) ---
+        const COLOR_CLASSES = [
+            'bg-indigo-100/70', 'bg-sky-100/70', 'bg-emerald-100/70', 
+            'bg-yellow-100/70', 'bg-pink-100/70', 'bg-cyan-100/70', 
+            'bg-purple-100/70', 'bg-lime-100/70'
+        ];
+        
+        // --- LISTENERS ---
+        refreshBtn.addEventListener('click', function() {
+            this.classList.add('opacity-50', 'cursor-not-allowed');
+            this.innerHTML = `
+                <svg class="animate-spin h-4 w-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-1.5">Cargando...</span>
+            `;
+            loadDashboard();
+        });
+
+        document.addEventListener('DOMContentLoaded', loadDashboard);
+
+
+        // --- FUNCIONES DE FORMATO ---
+        
+        function formatReadableDate(dateString) {
+            if (!dateString) return 'N/A';
+            try {
+                // Manejo de desfase de zona horaria para YYYY-MM-DD
+                const parts = dateString.split('-');
+                let date;
+                if(parts.length === 3) {
+                     date = new Date(parts[0], parts[1] - 1, parts[2]);
+                } else {
+                     date = new Date(dateString);
+                }
+                
+                if (isNaN(date.getTime())) return dateString;
+                const options = { year: 'numeric', month: 'short', day: 'numeric' };
+                return date.toLocaleDateString('es-ES', options);
+            } catch (e) {
+                return dateString;
+            }
+        }
+
+        
+        function getDeliveryDateClass(dateString) {
+            if (!dateString) return 'text-gray-600';
+            try {
+                let entregaDate;
+                const parts = dateString.split('-');
+                if(parts.length === 3) {
+                     // Ajuste para evitar desfase de zona horaria en fechas simples
+                     entregaDate = new Date(parts[0], parts[1] - 1, parts[2]);
+                } else {
+                     entregaDate = new Date(dateString);
+                }
+                
+                // Normalizar fechas a medianoche
+                entregaDate.setHours(0, 0, 0, 0); 
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                
+                if (entregaDate < today) {
+                    return 'text-red-600 font-bold italic'; // Vencido
+                } else if (entregaDate.getTime() === today.getTime()) {
+                    return 'text-orange-600 font-bold'; // Hoy
+                } else {
+                    return 'text-gray-600'; // Futuro
+                }
+            } catch (e) {
+                return 'text-gray-600'; 
+            }
+        }
+        
+        
+        function getEstadoBadgeClass(estado) {
+            if (!estado) return 'bg-gray-400';
+            const normalizedStatus = String(estado).toLowerCase().trim();
+
+            if (normalizedStatus.includes('pendiente')) {
+                return 'bg-amber-500 text-white';
+            }
+            if (normalizedStatus.includes('material') || normalizedStatus.includes('falta')) {
+                return 'bg-red-500 text-white';
+            }
+            if (normalizedStatus.includes('proceso')) {
+                return 'bg-blue-500 text-white';
+            }
+            if (normalizedStatus.includes('completo')) {
+                 return 'bg-green-500 text-white'; 
+            }
+            // Para cualquier otro estado
+            return 'bg-gray-600 text-white'; 
+        }
+
+        function renderCard(pedido, colorClass) {
+            const estadoClass = getEstadoBadgeClass(pedido.Estado);
+            const fechaEntrega = formatReadableDate(pedido.Fecha_Entrega);
+            const fechaEmision = formatReadableDate(pedido.Fecha_Emision);
+            const entregaClass = getDeliveryDateClass(pedido.Fecha_Entrega);
+            
+            const baseColor = colorClass.split('-')[1]; // Obtiene 'indigo' o 'sky', etc.
+            const borderColorClass = `border-${baseColor}-500`;
+
+            // Se aumentó el tamaño del número de orden a 'text-2xl'
+            return `
+                <div class="${colorClass} p-4 rounded-xl shadow-lg border-l-4 ${borderColorClass} hover:shadow-xl transition duration-300 transform hover:scale-[1.01] mb-4">
+                    <div class="flex justify-between items-start mb-2">
+                        <span class="inline-flex font-extrabold text-2xl text-gray-800 leading-none">
+                            #${pedido.Orden !== Infinity ? pedido.Orden : 'N/A'}
+                        </span>
+                        <span class="inline-flex items-center px-3 py-1 text-sm font-medium rounded-full bg-indigo-500 text-white shadow-md">
+                            ${pedido.Proyecto || 'Sin Proyecto'}
+                        </span>
+                    </div>
+
+                    <h3 class="text-lg font-extrabold text-gray-900 mb-1 leading-tight">
+                        ${pedido.Nombre_Pieza || 'Pieza Desconocida'}
+                    </h3>
+
+                    <div class="text-sm grid grid-cols-2 gap-x-4 gap-y-2 mb-4">
+                        <div class="col-span-1 space-y-2">
+                            <p class="text-gray-600"><strong class="text-gray-700">Cantidad:</strong> ${pedido.Cantidad || 1}</p>
+                            <p class="text-gray-600"><strong class="text-gray-700">Cliente:</strong> ${pedido.Cliente || 'Genérico'}</p>
+                        </div>
+
+                        <div class="col-span-1 space-y-2 text-right">
+                            <p class="text-gray-600">
+                                <strong class="text-gray-700">Emisión:</strong> ${fechaEmision}
+                            </p>
+                            <p class="text-gray-600">
+                                <strong class="text-gray-700">Entrega:</strong> <span class="${entregaClass}">${fechaEntrega}</span>
+                            </p>
+                        </div>
+
+                        ${pedido.Comentario ? `<p class="text-gray-600 italic mt-2 pt-2 text-xs col-span-2 border-t border-gray-200">Comentario: ${pedido.Comentario}</p>` : ''}
+                    </div>
+
+                    <div class="flex justify-end">
+                        <span class="inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full ${estadoClass}">
+                            Estado: ${pedido.Estado || 'No definido'}
+                        </span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- LÓGICA PRINCIPAL ADAPTADA A FETCH (GitHub Pages) ---
+
+        function loadDashboard() {
+            // 1. Mostrar carga y ocultar todo lo demás
+            loadingElement.classList.remove('hidden');
+            dashboardContainer.classList.add('hidden');
+            errorElement.classList.add('hidden');
+            
+            // Simular el estado de carga y deshabilitar botón
+            refreshBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            refreshBtn.innerHTML = `
+                <svg class="animate-spin h-4 w-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-1.5">Cargando...</span>
+            `;
+
+            // 2. Usar Fetch para obtener datos del Apps Script Web App
+            fetch(WEB_APP_URL)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Error HTTP: ${response.status} - No se pudo acceder al servidor de Google.`);
+                    }
+                    return response.json(); 
+                })
+                .then(data => {
+                    // Verifica si el JSON devuelto por Apps Script contiene un error
+                    if (data && data.error) {
+                        throw new Error(data.error);
+                    }
+                    handleSuccess(data); 
+                })
+                .catch(error => {
+                    handleError({ message: error.message }); 
+                    console.error("Error al obtener datos:", error);
+                });
+        }
+
+        // --- MANEJADORES DE RESPUESTA ---
+
+        function handleSuccess(data) {
+            loadingElement.classList.add('hidden');
+            
+            // Restaurar botón
+            refreshBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            refreshBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-indigo-600 transition-transform duration-500 group-hover:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Actualizar</span>
+            `;
+
+            const { pedidosPorAsignado, colorMap } = data;
+            
+            if (Object.keys(pedidosPorAsignado).length === 0) {
+                dashboardContainer.innerHTML = '<p class="text-center text-xl text-gray-500 mt-10 w-full col-span-2">No hay pedidos pendientes.</p>';
+                dashboardContainer.classList.remove('hidden');
+                return;
+            }
+
+            let dashboardHTML = '';
+            
+            // Itera sobre los asignados (columnas)
+            for (const asignado in pedidosPorAsignado) {
+                const pedidos = pedidosPorAsignado[asignado];
+                let cardsHTML = '';
+                
+                // Itera sobre los pedidos dentro de cada columna
+                pedidos.forEach(pedido => {
+                    const colorIndex = colorMap[pedido.Proyecto] !== undefined ? colorMap[pedido.Proyecto] : 0;
+                    const colorClass = COLOR_CLASSES[colorIndex % COLOR_CLASSES.length];
+                    cardsHTML += renderCard(pedido, colorClass);
+                });
+
+                dashboardHTML += `
+                    <div class="flex flex-col h-full bg-white rounded-2xl shadow-xl overflow-hidden">
+                        <div class="sticky-header bg-indigo-600 text-white p-4 rounded-t-2xl shadow-lg">
+                            <h2 class="text-xl font-bold truncate">${asignado}</h2>
+                            <span class="text-sm font-light">${pedidos.length} Pedidos Pendientes</span>
+                        </div>
+                        
+                        <div class="p-4 overflow-y-auto flex-grow">
+                            ${cardsHTML}
+                        </div>
+                    </div>
+                `;
+            }
+
+            dashboardContainer.innerHTML = dashboardHTML;
+            dashboardContainer.classList.remove('hidden');
+        }
+
+        function handleError(error) {
+            loadingElement.classList.add('hidden');
+            // Restaurar botón y mostrar mensaje de error
+            refreshBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            refreshBtn.innerHTML = 'Reintentar';
+            
+            errorTextElement.textContent = `Fallo de comunicación: ${error.message}`; 
+            errorElement.classList.remove('hidden');
+            console.error("Error al obtener o procesar datos:", error);
+        }
+    </script>
+</body>
+</html>
