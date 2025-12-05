@@ -90,27 +90,70 @@
         document.addEventListener('DOMContentLoaded', loadDashboard);
 
 
+        
+
+
         // --- FUNCIONES DE FORMATO ---
         
-        function formatReadableDate(dateString) {
-            if (!dateString) return 'N/A';
-            try {
+        //function formatReadableDate(dateString) {
+           // if (!dateString) return 'N/A';
+          //  try {
                 // Manejo de desfase de zona horaria para YYYY-MM-DD
-                const parts = dateString.split('-');
-                let date;
-                if(parts.length === 3) {
-                     date = new Date(parts[0], parts[1] - 1, parts[2]);
-                } else {
-                     date = new Date(dateString);
-                }
+           //     const parts = dateString.split('-');
+           //     let date;
+           //     if(parts.length === 3) {
+           //          date = new Date(parts[0], parts[1] - 1, parts[2]);
+            //    } else {
+            //         date = new Date(dateString);
+           //     }
                 
-                if (isNaN(date.getTime())) return dateString;
-                const options = { year: 'numeric', month: 'short', day: 'numeric' };
-                return date.toLocaleDateString('es-ES', options);
-            } catch (e) {
-                return dateString;
+           //     if (isNaN(date.getTime())) return dateString;
+          //      const options = { year: 'numeric', month: 'short', day: 'numeric' };
+         //       return date.toLocaleDateString('es-ES', options);
+         //   } catch (e) {
+       //         return dateString;
+      //      }
+     //   }
+
+        function formatReadableDate(dateString) {
+    if (!dateString) return 'N/A';
+    
+    try {
+        let date;
+        
+        // 1. Manejar el formato ISO (con T y Z)
+        if (dateString.includes('T') && dateString.endsWith('Z')) {
+            // Se crea la fecha directamente. 
+            // Esto usa la zona horaria del navegador, pero el problema de desfase 
+            // se resuelve parcialmente en el Apps Script (ver nota abajo).
+            date = new Date(dateString); 
+            
+        } 
+        // 2. Manejar el formato YYYY-MM-DD (sin T y Z)
+        else {
+            const parts = dateString.split('-');
+            if (parts.length === 3) {
+                // Truco para evitar el desfase: crea la fecha sin asumir que es UTC
+                // (p.e., crea 2025-12-16 a medianoche en la zona horaria local).
+                date = new Date(parts[0], parts[1] - 1, parts[2]);
+            } else {
+                date = new Date(dateString);
             }
         }
+
+        if (isNaN(date.getTime())) return dateString;
+
+        // Opciones de formato. Utilizamos 'UTC: false' para que no fuerce la zona
+        // horaria local si la fecha ya se corrigió en el Apps Script.
+        const options = { year: 'numeric', month: 'short', day: 'numeric' };
+        
+        // Usar toLocaleDateString es generalmente suficiente para el formato legible
+        return date.toLocaleDateString('es-ES', options);
+        
+    } catch (e) {
+        return dateString;
+    }
+}
 
         
         function getDeliveryDateClass(dateString) {
